@@ -1,10 +1,10 @@
 // Gestion du joueur FPS (position, physique, collisions)
 
 const PLAYER = {
-  height: 1.8,
-  radius: 0.4,
-  eyeHeight: 1.6,
-  speed: 6,
+  height: 1.9,      // ~2 blocs
+  radius: 0.35,
+  eyeHeight: 1.62,
+  speed: 4.3,
   jumpSpeed: 8,
   gravity: 20
 };
@@ -22,11 +22,11 @@ let player = {
 function spawnPlayer() {
   const sx = Math.floor(WORLD.WIDTH / 2);
   const sz = Math.floor(WORLD.DEPTH / 2);
-  const sy = getSurfaceHeightAt(sx, sz) + 3;
+  const sy = getSurfaceHeightAt(sx, sz);
 
   player.x = sx + 0.5;
   player.z = sz + 0.5;
-  player.y = sy;
+  player.y = sy + PLAYER.height + 0.2; // bien au-dessus du sol
   player.vx = player.vy = player.vz = 0;
   player.onGround = false;
 }
@@ -69,42 +69,47 @@ function integratePlayer(delta) {
     return def && def.solid;
   }
 
-  // X
+  const feetY = player.y + 0.1;
+  const headY = player.y + height - 0.1;
+
+  // --- X ---
   if (
-    isSolidAt(nx + radius, player.y, player.z) ||
-    isSolidAt(nx - radius, player.y, player.z) ||
-    isSolidAt(nx + radius, player.y + height * 0.5, player.z) ||
-    isSolidAt(nx - radius, player.y + height * 0.5, player.z)
+    isSolidAt(nx + radius, feetY, player.z) ||
+    isSolidAt(nx + radius, headY, player.z) ||
+    isSolidAt(nx - radius, feetY, player.z) ||
+    isSolidAt(nx - radius, headY, player.z)
   ) {
     player.vx = 0;
     nx = player.x;
   }
 
-  // Z
+  // --- Z ---
   if (
-    isSolidAt(player.x, player.y, nz + radius) ||
-    isSolidAt(player.x, player.y, nz - radius) ||
-    isSolidAt(player.x, player.y + height * 0.5, nz + radius) ||
-    isSolidAt(player.x, player.y + height * 0.5, nz - radius)
+    isSolidAt(player.x, feetY, nz + radius) ||
+    isSolidAt(player.x, headY, nz + radius) ||
+    isSolidAt(player.x, feetY, nz - radius) ||
+    isSolidAt(player.x, headY, nz - radius)
   ) {
     player.vz = 0;
     nz = player.z;
   }
 
-  // Y
+  // --- Y ---
   player.onGround = false;
+
   if (player.vy > 0) {
+    // plafond
     if (
       isSolidAt(nx, ny + height, nz) ||
-      isSolidAt(nx, ny + height * 0.9, nz)
+      isSolidAt(nx, ny + height - 0.1, nz)
     ) {
       player.vy = 0;
-      ny = Math.floor(ny + height) - height;
+      ny = Math.floor(ny + height) - height - 0.001;
     }
   } else {
+    // sol
     if (
-      isSolidAt(nx, ny, nz) ||
-      isSolidAt(nx, ny + 0.1, nz)
+      isSolidAt(nx, ny - 0.1, nz)
     ) {
       player.vy = 0;
       player.onGround = true;
@@ -120,3 +125,4 @@ function integratePlayer(delta) {
     spawnPlayer();
   }
 }
+
