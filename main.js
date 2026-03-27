@@ -40,7 +40,6 @@ function buildChunkMesh(cx, cz) {
     const pz = z;
 
     const c = new THREE.Color(color);
-
     const face = [];
 
     if (nx === 1) {
@@ -387,9 +386,9 @@ function gameLoop() {
     forward.normalize();
 
     const right = new THREE.Vector3();
-    right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize().multiplyScalar(-1);
+    // ✔️ CORRECTION DÉFINITIVE : forward × up
+    right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
 
-    let move = 0;
     let dirVec = { forward: new THREE.Vector3(0, 0, 0), right: new THREE.Vector3(0, 0, 0), move: 0, jump: false };
 
     let moveX = 0;
@@ -441,4 +440,3 @@ function main() {
 }
 
 document.addEventListener("DOMContentLoaded", main);
-
