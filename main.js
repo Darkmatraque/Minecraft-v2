@@ -14,9 +14,11 @@ animate();
 function init() {
   const container = document.getElementById("game-container");
 
+  // SCÈNE
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x87ceeb);
 
+  // CAMÉRA
   camera = new THREE.PerspectiveCamera(
     75,
     window.innerWidth / window.innerHeight,
@@ -25,16 +27,19 @@ function init() {
   );
   camera.position.set(WORLD_SIZE / 2, WORLD_HEIGHT + 5, WORLD_SIZE * 1.5);
 
+  // RENDERER
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(window.devicePixelRatio);
   container.appendChild(renderer.domElement);
 
+  // CONTROLS
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.1;
   controls.target.set(WORLD_SIZE / 2, 2, WORLD_SIZE / 2);
 
+  // LUMIÈRES
   const ambient = new THREE.AmbientLight(0xffffff, 0.6);
   scene.add(ambient);
 
@@ -42,8 +47,10 @@ function init() {
   dirLight.position.set(50, 100, 50);
   scene.add(dirLight);
 
+  // MONDE VOXEL
   createVoxelWorld();
 
+  // EVENTS
   window.addEventListener("resize", onWindowResize);
   window.addEventListener("keydown", (e) => (keys[e.code] = true));
   window.addEventListener("keyup", (e) => (keys[e.code] = false));
@@ -73,9 +80,13 @@ function createVoxelWorld() {
         dummy.position.set(x, y, z);
         dummy.updateMatrix();
 
-        if (y === height - 1) grassMesh.setMatrixAt(gi++, dummy.matrix);
-        else if (y >= height - 3) dirtMesh.setMatrixAt(di++, dummy.matrix);
-        else stoneMesh.setMatrixAt(si++, dummy.matrix);
+        if (y === height - 1) {
+          grassMesh.setMatrixAt(gi++, dummy.matrix);
+        } else if (y >= height - 3) {
+          dirtMesh.setMatrixAt(di++, dummy.matrix);
+        } else {
+          stoneMesh.setMatrixAt(si++, dummy.matrix);
+        }
       }
     }
   }
@@ -108,15 +119,21 @@ function updateMovement(delta) {
   const right = new THREE.Vector3();
   right.crossVectors(forward, camera.up).normalize();
 
-  if (keys["KeyW"]) camera.position.addScaledVector(forward, speed * delta);
-  if (keys["KeyS"]) camera.position.addScaledVector(forward, -speed * delta);
-  if (keys["KeyA"]) camera.position.addScaledVector(right, -speed * delta);
-  if (keys["KeyD"]) camera.position.addScaledVector(right, speed * delta);
-  if (keys["Space"]) camera.position.y += speed * delta;
-  if (keys["ShiftLeft"]) camera.position.y -= speed * delta;
+  const move = new THREE.Vector3();
+
+  if (keys["KeyW"]) move.addScaledVector(forward, speed * delta);
+  if (keys["KeyS"]) move.addScaledVector(forward, -speed * delta);
+  if (keys["KeyA"]) move.addScaledVector(right, -speed * delta);
+  if (keys["KeyD"]) move.addScaledVector(right, speed * delta);
+  if (keys["Space"]) move.y += speed * delta;
+  if (keys["ShiftLeft"] || keys["ShiftRight"]) move.y -= speed * delta;
+
+  camera.position.add(move);
+  controls.target.add(move);
 }
 
 let last = performance.now();
+
 function animate() {
   requestAnimationFrame(animate);
 
@@ -128,4 +145,3 @@ function animate() {
   controls.update();
   renderer.render(scene, camera);
 }
-
