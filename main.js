@@ -1,147 +1,444 @@
-import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
-import { OrbitControls } from "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+// Moteur principal : rendu, contrôles, minage/placement
 
-const WORLD_SIZE = 32;
-const WORLD_HEIGHT = 8;
-const BLOCK_SIZE = 1;
+let renderer, scene, camera, controls;
+let canvas;
+let clock;
+let chunkMeshes = new Map();
+let currentBiomeLabel = BIOME.PLAINS;
+let selectedHotbarIndex = 0;
 
-let scene, camera, renderer, controls;
-let keys = {};
+const CHUNK = {
+  SIZE: WORLD.CHUNK_SIZE
+};
 
-init();
-animate();
-
-function init() {
-  const container = document.getElementById("game-container");
-
-  // SCÈNE
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x87ceeb);
-
-  // CAMÉRA
-  camera = new THREE.PerspectiveCamera(
-    75,
-    window.innerWidth / window.innerHeight,
-    0.1,
-    1000
-  );
-  camera.position.set(WORLD_SIZE / 2, WORLD_HEIGHT + 5, WORLD_SIZE * 1.5);
-
-  // RENDERER
-  renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(window.devicePixelRatio);
-  container.appendChild(renderer.domElement);
-
-  // CONTROLS
-  controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.1;
-  controls.target.set(WORLD_SIZE / 2, 2, WORLD_SIZE / 2);
-
-  // LUMIÈRES
-  const ambient = new THREE.AmbientLight(0xffffff, 0.6);
-  scene.add(ambient);
-
-  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-  dirLight.position.set(50, 100, 50);
-  scene.add(dirLight);
-
-  // MONDE VOXEL
-  createVoxelWorld();
-
-  // EVENTS
-  window.addEventListener("resize", onWindowResize);
-  window.addEventListener("keydown", (e) => (keys[e.code] = true));
-  window.addEventListener("keyup", (e) => (keys[e.code] = false));
+function chunkKey(cx, cz) {
+  return `${cx},${cz}`;
 }
 
-function createVoxelWorld() {
-  const geometry = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+function buildChunkMesh(cx, cz) {
+  const size = CHUNK.SIZE;
+  const startX = cx * size;
+  const startZ = cz * size;
 
-  const grassMat = new THREE.MeshStandardMaterial({ color: 0x3ba635 });
-  const dirtMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b });
-  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x777777 });
+  const geom = new THREE.BufferGeometry();
+  const positions = [];
+  const colors = [];
 
-  const maxInstances = WORLD_SIZE * WORLD_SIZE * WORLD_HEIGHT;
+  const dir = [
+    { x: 1, y: 0, z: 0 },
+    { x: -1, y: 0, z: 0 },
+    { x: 0, y: 1, z: 0 },
+    { x: 0, y: -1, z: 0 },
+    { x: 0, y: 0, z: 1 },
+    { x: 0, y: 0, z: -1 }
+  ];
 
-  const grassMesh = new THREE.InstancedMesh(geometry, grassMat, maxInstances);
-  const dirtMesh = new THREE.InstancedMesh(geometry, dirtMat, maxInstances);
-  const stoneMesh = new THREE.InstancedMesh(geometry, stoneMat, maxInstances);
+  function addFace(x, y, z, nx, ny, nz, color) {
+    const s = 1;
+    const px = x;
+    const py = y;
+    const pz = z;
 
-  let gi = 0, di = 0, si = 0;
-  const dummy = new THREE.Object3D();
+    const c = new THREE.Color(color);
 
-  for (let x = 0; x < WORLD_SIZE; x++) {
-    for (let z = 0; z < WORLD_SIZE; z++) {
-      const height = 2 + Math.floor(2 * Math.sin(x * 0.3) * Math.cos(z * 0.3));
+    const face = [];
 
-      for (let y = 0; y < height; y++) {
-        dummy.position.set(x, y, z);
-        dummy.updateMatrix();
+    if (nx === 1) {
+      face.push(
+        px + s, py, pz,
+        px + s, py + s, pz,
+        px + s, py + s, pz + s,
+        px + s, py, pz,
+        px + s, py + s, pz + s,
+        px + s, py, pz + s
+      );
+    } else if (nx === -1) {
+      face.push(
+        px, py, pz,
+        px, py + s, pz + s,
+        px, py + s, pz,
+        px, py, pz,
+        px, py, pz + s,
+        px, py + s, pz + s
+      );
+    } else if (ny === 1) {
+      face.push(
+        px, py + s, pz,
+        px, py + s, pz + s,
+        px + s, py + s, pz + s,
+        px, py + s, pz,
+        px + s, py + s, pz + s,
+        px + s, py + s, pz
+      );
+    } else if (ny === -1) {
+      face.push(
+        px, py, pz,
+        px + s, py, pz + s,
+        px, py, pz + s,
+        px, py, pz,
+        px + s, py, pz,
+        px + s, py, pz + s
+      );
+    } else if (nz === 1) {
+      face.push(
+        px, py, pz + s,
+        px + s, py + s, pz + s,
+        px, py + s, pz + s,
+        px, py, pz + s,
+        px + s, py, pz + s,
+        px + s, py + s, pz + s
+      );
+    } else if (nz === -1) {
+      face.push(
+        px, py, pz,
+        px, py + s, pz,
+        px + s, py + s, pz,
+        px, py, pz,
+        px + s, py + s, pz,
+        px + s, py, pz
+      );
+    }
 
-        if (y === height - 1) {
-          grassMesh.setMatrixAt(gi++, dummy.matrix);
-        } else if (y >= height - 3) {
-          dirtMesh.setMatrixAt(di++, dummy.matrix);
-        } else {
-          stoneMesh.setMatrixAt(si++, dummy.matrix);
+    positions.push(...face);
+    for (let i = 0; i < 6; i++) {
+      colors.push(c.r, c.g, c.b);
+    }
+  }
+
+  for (let x = startX; x < startX + size; x++) {
+    for (let z = startZ; z < startZ + size; z++) {
+      for (let y = 0; y < WORLD.HEIGHT; y++) {
+        const id = getBlock(x, y, z);
+        if (id === BLOCK.AIR) continue;
+        const def = BLOCK_DEFS[id];
+        if (!def || !def.solid) continue;
+
+        for (const d of dir) {
+          const nx = x + d.x;
+          const ny = y + d.y;
+          const nz = z + d.z;
+          const nid = getBlock(nx, ny, nz);
+          const ndef = BLOCK_DEFS[nid];
+          if (!ndef || !ndef.solid) {
+            addFace(x, y, z, d.x, d.y, d.z, def.color);
+          }
         }
       }
     }
   }
 
-  grassMesh.count = gi;
-  dirtMesh.count = di;
-  stoneMesh.count = si;
+  if (positions.length === 0) return null;
 
-  grassMesh.instanceMatrix.needsUpdate = true;
-  dirtMesh.instanceMatrix.needsUpdate = true;
-  stoneMesh.instanceMatrix.needsUpdate = true;
+  const posAttr = new THREE.Float32BufferAttribute(positions, 3);
+  const colAttr = new THREE.Float32BufferAttribute(colors, 3);
+  geom.setAttribute("position", posAttr);
+  geom.setAttribute("color", colAttr);
+  geom.computeVertexNormals();
 
-  scene.add(grassMesh, dirtMesh, stoneMesh);
+  const mat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    flatShading: true
+  });
+
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.castShadow = false;
+  mesh.receiveShadow = true;
+
+  mesh.position.set(0, 0, 0);
+  return mesh;
 }
 
-function onWindowResize() {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
+function ensureChunk(cx, cz) {
+  const key = chunkKey(cx, cz);
+  if (chunkMeshes.has(key)) return;
+
+  const mesh = buildChunkMesh(cx, cz);
+  if (mesh) {
+    scene.add(mesh);
+    chunkMeshes.set(key, mesh);
+  }
+}
+
+function updateVisibleChunks() {
+  const range = 3;
+  const cx = Math.floor(player.x / CHUNK.SIZE);
+  const cz = Math.floor(player.z / CHUNK.SIZE);
+
+  const needed = new Set();
+
+  for (let dx = -range; dx <= range; dx++) {
+    for (let dz = -range; dz <= range; dz++) {
+      const ncx = cx + dx;
+      const ncz = cz + dz;
+      if (ncx < 0 || ncz < 0) continue;
+      if (ncx >= WORLD.WIDTH / CHUNK.SIZE || ncz >= WORLD.DEPTH / CHUNK.SIZE) continue;
+      const key = chunkKey(ncx, ncz);
+      needed.add(key);
+      ensureChunk(ncx, ncz);
+    }
+  }
+
+  for (const [key, mesh] of chunkMeshes.entries()) {
+    if (!needed.has(key)) {
+      scene.remove(mesh);
+      chunkMeshes.delete(key);
+    }
+  }
+}
+
+let keys = {};
+let pointerLocked = false;
+let hotbarEl, biomeLabelEl, posLabelEl, hintEl;
+
+function initControls() {
+  document.addEventListener("keydown", (e) => {
+    keys[e.code] = true;
+
+    if (e.code >= "Digit1" && e.code <= "Digit4") {
+      selectedHotbarIndex = Number(e.code.slice(-1)) - 1;
+      updateHotbarUI();
+    }
+  });
+
+  document.addEventListener("keyup", (e) => {
+    keys[e.code] = false;
+  });
+
+  document.body.addEventListener("click", () => {
+    if (!pointerLocked) {
+      controls.lock();
+    }
+  });
+
+  controls.addEventListener("lock", () => {
+    pointerLocked = true;
+    hintEl.style.display = "none";
+  });
+
+  controls.addEventListener("unlock", () => {
+    pointerLocked = false;
+    hintEl.style.display = "block";
+  });
+
+  document.addEventListener("mousedown", (e) => {
+    if (!pointerLocked) return;
+
+    if (e.button === 0) {
+      mineBlock();
+    } else if (e.button === 2) {
+      placeBlock();
+    }
+  });
+
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+}
+
+function getLookRay() {
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  return dir.normalize();
+}
+
+function raycastBlock(maxDist = 6) {
+  const origin = new THREE.Vector3(player.x, player.y + PLAYER.eyeHeight, player.z);
+  const dir = getLookRay();
+
+  const step = 0.1;
+  let dist = 0;
+  let lastAirPos = null;
+
+  while (dist < maxDist) {
+    const px = origin.x + dir.x * dist;
+    const py = origin.y + dir.y * dist;
+    const pz = origin.z + dir.z * dist;
+
+    const bx = Math.floor(px);
+    const by = Math.floor(py);
+    const bz = Math.floor(pz);
+
+    const id = getBlock(bx, by, bz);
+    if (id !== BLOCK.AIR) {
+      return { hit: true, x: bx, y: by, z: bz, placePos: lastAirPos };
+    }
+
+    lastAirPos = { x: bx, y: by, z: bz };
+    dist += step;
+  }
+
+  return { hit: false };
+}
+
+function mineBlock() {
+  const hit = raycastBlock();
+  if (!hit.hit) return;
+
+  setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
+  rebuildChunkAt(hit.x, hit.z);
+}
+
+function placeBlock() {
+  const hit = raycastBlock();
+  if (!hit.hit || !hit.placePos) return;
+
+  const blockId = HOTBAR_BLOCKS[selectedHotbarIndex] || BLOCK.STONE;
+  const { x, y, z } = hit.placePos;
+
+  const px = player.x;
+  const py = player.y;
+  const pz = player.z;
+
+  if (
+    Math.abs(x + 0.5 - px) < PLAYER.radius &&
+    Math.abs(y + 0.5 - py) < PLAYER.height &&
+    Math.abs(z + 0.5 - pz) < PLAYER.radius
+  ) {
+    return;
+  }
+
+  setBlock(x, y, z, blockId);
+  rebuildChunkAt(x, z);
+}
+
+function rebuildChunkAt(x, z) {
+  const cx = Math.floor(x / CHUNK.SIZE);
+  const cz = Math.floor(z / CHUNK.SIZE);
+  const key = chunkKey(cx, cz);
+  const old = chunkMeshes.get(key);
+  if (old) {
+    scene.remove(old);
+    chunkMeshes.delete(key);
+  }
+  ensureChunk(cx, cz);
+}
+
+function updateHotbarUI() {
+  hotbarEl.innerHTML = "";
+  HOTBAR_BLOCKS.forEach((id, i) => {
+    const def = BLOCK_DEFS[id];
+    const slot = document.createElement("div");
+    slot.className = "hotbar-slot";
+    if (i === selectedHotbarIndex) slot.classList.add("selected");
+    slot.textContent = def ? def.name[0] : "?";
+    hotbarEl.appendChild(slot);
+  });
+}
+
+function updateInfoUI() {
+  biomeLabelEl.textContent = "Biome: " + currentBiomeLabel;
+  posLabelEl.textContent =
+    "X: " + player.x.toFixed(1) +
+    " Y: " + player.y.toFixed(1) +
+    " Z: " + player.z.toFixed(1);
+}
+
+function initScene() {
+  canvas = document.getElementById("game-canvas");
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87ceeb);
+
+  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 500);
+  camera.position.set(player.x, player.y + PLAYER.eyeHeight, player.z);
+
+  controls = new THREE.PointerLockControls(camera, document.body);
+
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.7);
+  hemi.position.set(0, 100, 0);
+  scene.add(hemi);
+
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  dirLight.position.set(50, 100, 50);
+  dirLight.castShadow = true;
+  scene.add(dirLight);
+
+  clock = new THREE.Clock();
+
+  window.addEventListener("resize", () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
 }
 
-function updateMovement(delta) {
-  const speed = 10;
-
-  const forward = new THREE.Vector3();
-  camera.getWorldDirection(forward);
-  forward.y = 0;
-  forward.normalize();
-
-  const right = new THREE.Vector3();
-  right.crossVectors(forward, camera.up).normalize();
-
-  const move = new THREE.Vector3();
-
-  if (keys["KeyW"]) move.addScaledVector(forward, speed * delta);
-  if (keys["KeyS"]) move.addScaledVector(forward, -speed * delta);
-  if (keys["KeyA"]) move.addScaledVector(right, -speed * delta);
-  if (keys["KeyD"]) move.addScaledVector(right, speed * delta);
-  if (keys["Space"]) move.y += speed * delta;
-  if (keys["ShiftLeft"] || keys["ShiftRight"]) move.y -= speed * delta;
-
-  camera.position.add(move);
-  controls.target.add(move);
+function updateBiomeLabel() {
+  const nx = player.x / 256;
+  const nz = player.z / 256;
+  const hBase = heightNoise.noise(nx * 1.5, nz * 1.5);
+  const hDetail = heightNoise.noise(nx * 4.0, nz * 4.0) * 0.25;
+  const heightNorm = Math.min(1, Math.max(0, hBase * 0.7 + hDetail * 0.3));
+  const temp = tempNoise.noise(nx * 0.8, nz * 0.8);
+  const humid = humidNoise.noise(nx * 0.8, nz * 0.8);
+  currentBiomeLabel = getBiomeAt(temp, humid, heightNorm);
 }
 
-let last = performance.now();
+function gameLoop() {
+  requestAnimationFrame(gameLoop);
 
-function animate() {
-  requestAnimationFrame(animate);
+  const delta = clock.getDelta();
 
-  const now = performance.now();
-  const delta = (now - last) / 1000;
-  last = now;
+  if (pointerLocked) {
+    const forward = new THREE.Vector3();
+    camera.getWorldDirection(forward);
+    forward.y = 0;
+    forward.normalize();
 
-  updateMovement(delta);
-  controls.update();
+    const right = new THREE.Vector3();
+    right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize().multiplyScalar(-1);
+
+    let move = 0;
+    let dirVec = { forward: new THREE.Vector3(0, 0, 0), right: new THREE.Vector3(0, 0, 0), move: 0, jump: false };
+
+    let moveX = 0;
+    let moveZ = 0;
+
+    if (keys["KeyW"]) moveZ += 1;
+    if (keys["KeyS"]) moveZ -= 1;
+    if (keys["KeyA"]) moveX -= 1;
+    if (keys["KeyD"]) moveX += 1;
+
+    const len = Math.hypot(moveX, moveZ);
+    if (len > 0) {
+      moveX /= len;
+      moveZ /= len;
+      dirVec.forward.copy(forward).multiplyScalar(moveZ);
+      dirVec.right.copy(right).multiplyScalar(moveX);
+      dirVec.move = 1;
+    }
+
+    dirVec.jump = !!keys["Space"];
+
+    movePlayer(delta, dirVec);
+    camera.position.set(player.x, player.y + PLAYER.eyeHeight, player.z);
+  }
+
+  updateVisibleChunks();
+  updateBiomeLabel();
+  updateInfoUI();
+
   renderer.render(scene, camera);
 }
+
+function initUI() {
+  hotbarEl = document.getElementById("hotbar");
+  biomeLabelEl = document.getElementById("biome-label");
+  posLabelEl = document.getElementById("pos-label");
+  hintEl = document.getElementById("hint");
+  updateHotbarUI();
+}
+
+function main() {
+  initWorld();
+  spawnPlayer();
+  initScene();
+  initUI();
+  initControls();
+  updateVisibleChunks();
+  gameLoop();
+}
+
+document.addEventListener("DOMContentLoaded", main);
+
