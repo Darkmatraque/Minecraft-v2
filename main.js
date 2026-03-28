@@ -1,20 +1,31 @@
-// Moteur principal : rendu, contrôles, minage/placement
+// Moteur principal optimisé : rendu, contrôles, minage/placement
 
 let renderer, scene, camera, controls;
 let canvas;
 let clock;
+
+// Chunks visibles
 let chunkMeshes = new Map();
+
+// Biome + hotbar
 let currentBiomeLabel = BIOME.PLAINS;
 let selectedHotbarIndex = 0;
 
-const CHUNK = {
-  SIZE: WORLD.CHUNK_SIZE
-};
+// Sprint / Accroupi
+let isSprinting = false;
+let isCrouching = false;
+
+// Optimisation
+const CHUNK = { SIZE: WORLD.CHUNK_SIZE };
+const VIEW_DISTANCE = 3; // distance en chunks
 
 function chunkKey(cx, cz) {
   return `${cx},${cz}`;
 }
 
+/* -----------------------------------------------------------
+   GÉNÉRATION D’UN CHUNK (optimisée + contours noirs)
+----------------------------------------------------------- */
 function buildChunkMesh(cx, cz) {
   const size = CHUNK.SIZE;
   const startX = cx * size;
@@ -24,7 +35,7 @@ function buildChunkMesh(cx, cz) {
   const positions = [];
   const colors = [];
 
-  const dir = [
+  const directions = [
     { x: 1, y: 0, z: 0 },
     { x: -1, y: 0, z: 0 },
     { x: 0, y: 1, z: 0 },
@@ -104,20 +115,24 @@ function buildChunkMesh(cx, cz) {
     }
   }
 
+  // Construction du chunk
   for (let x = startX; x < startX + size; x++) {
     for (let z = startZ; z < startZ + size; z++) {
       for (let y = 0; y < WORLD.HEIGHT; y++) {
         const id = getBlock(x, y, z);
         if (id === BLOCK.AIR) continue;
+
         const def = BLOCK_DEFS[id];
         if (!def || !def.solid) continue;
 
-        for (const d of dir) {
+        for (const d of directions) {
           const nx = x + d.x;
           const ny = y + d.y;
           const nz = z + d.z;
+
           const nid = getBlock(nx, ny, nz);
           const ndef = BLOCK_DEFS[nid];
+
           if (!ndef || !ndef.solid) {
             addFace(x, y, z, d.x, d.y, d.z, def.color);
           }
@@ -128,10 +143,8 @@ function buildChunkMesh(cx, cz) {
 
   if (positions.length === 0) return null;
 
-  const posAttr = new THREE.Float32BufferAttribute(positions, 3);
-  const colAttr = new THREE.Float32BufferAttribute(colors, 3);
-  geom.setAttribute("position", posAttr);
-  geom.setAttribute("color", colAttr);
+  geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geom.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   geom.computeVertexNormals();
 
   const mat = new THREE.MeshStandardMaterial({
@@ -140,55 +153,53 @@ function buildChunkMesh(cx, cz) {
   });
 
   const mesh = new THREE.Mesh(geom, mat);
-  mesh.castShadow = false;
-  mesh.receiveShadow = true;
 
-  // ----------------------------------------------------
-  //  AJOUT : CONTOURS NOIRS AUTOUR DES BLOCS DU CHUNK
-  // ----------------------------------------------------
+  // Contours noirs (optimisé)
   const wireGeom = new THREE.WireframeGeometry(geom);
-  const wireMat = new THREE.LineBasicMaterial({
-    color: 0x000000,
-    linewidth: 1
-  });
+  const wireMat = new THREE.LineBasicMaterial({ color: 0x000000 });
   const wireframe = new THREE.LineSegments(wireGeom, wireMat);
   mesh.add(wireframe);
-  // ----------------------------------------------------
 
-  mesh.position.set(0, 0, 0);
   return mesh;
 }
 
+/* -----------------------------------------------------------
+   CHUNKS VISIBLES (optimisation)
+----------------------------------------------------------- */
 function ensureChunk(cx, cz) {
   const key = chunkKey(cx, cz);
   if (chunkMeshes.has(key)) return;
 
   const mesh = buildChunkMesh(cx, cz);
-  if (mesh) {
-    scene.add(mesh);
-    chunkMeshes.set(key, mesh);
-  }
+  if (!mesh) return;
+
+  mesh.position.set(0, 0, 0);
+  chunkMeshes.set(key, mesh);
+  scene.add(mesh);
 }
 
 function updateVisibleChunks() {
-  const range = 3;
   const cx = Math.floor(player.x / CHUNK.SIZE);
   const cz = Math.floor(player.z / CHUNK.SIZE);
 
   const needed = new Set();
 
-  for (let dx = -range; dx <= range; dx++) {
-    for (let dz = -range; dz <= range; dz++) {
+  for (let dx = -VIEW_DISTANCE; dx <= VIEW_DISTANCE; dx++) {
+    for (let dz = -VIEW_DISTANCE; dz <= VIEW_DISTANCE; dz++) {
       const ncx = cx + dx;
       const ncz = cz + dz;
+
       if (ncx < 0 || ncz < 0) continue;
-      if (ncx >= WORLD.WIDTH / CHUNK.SIZE || ncz >= WORLD.DEPTH / CHUNK.SIZE) continue;
+      if (ncx >= WORLD.WIDTH / CHUNK.SIZE) continue;
+      if (ncz >= WORLD.DEPTH / CHUNK.SIZE) continue;
+
       const key = chunkKey(ncx, ncz);
       needed.add(key);
       ensureChunk(ncx, ncz);
     }
   }
 
+  // Suppression des chunks hors champ
   for (const [key, mesh] of chunkMeshes.entries()) {
     if (!needed.has(key)) {
       scene.remove(mesh);
@@ -197,53 +208,9 @@ function updateVisibleChunks() {
   }
 }
 
-let keys = {};
-let pointerLocked = false;
-let hotbarEl, biomeLabelEl, posLabelEl, hintEl;
-
-function initControls() {
-  document.addEventListener("keydown", (e) => {
-    keys[e.code] = true;
-
-    if (e.code >= "Digit1" && e.code <= "Digit4") {
-      selectedHotbarIndex = Number(e.code.slice(-1)) - 1;
-      updateHotbarUI();
-    }
-  });
-
-  document.addEventListener("keyup", (e) => {
-    keys[e.code] = false;
-  });
-
-  document.body.addEventListener("click", () => {
-    if (!pointerLocked) {
-      controls.lock();
-    }
-  });
-
-  controls.addEventListener("lock", () => {
-    pointerLocked = true;
-    hintEl.style.display = "none";
-  });
-
-  controls.addEventListener("unlock", () => {
-    pointerLocked = false;
-    hintEl.style.display = "block";
-  });
-
-  document.addEventListener("mousedown", (e) => {
-    if (!pointerLocked) return;
-
-    if (e.button === 0) {
-      mineBlock();
-    } else if (e.button === 2) {
-      placeBlock();
-    }
-  });
-
-  document.addEventListener("contextmenu", (e) => e.preventDefault());
-}
-
+/* -----------------------------------------------------------
+   RAYCAST BLOCS (optimisé)
+----------------------------------------------------------- */
 function getLookRay() {
   const dir = new THREE.Vector3();
   camera.getWorldDirection(dir);
@@ -251,11 +218,16 @@ function getLookRay() {
 }
 
 function raycastBlock(maxDist = 6) {
-  const origin = new THREE.Vector3(player.x, player.y + PLAYER.eyeHeight, player.z);
-  const dir = getLookRay();
+  const origin = new THREE.Vector3(
+    player.x,
+    player.y + PLAYER.eyeHeight,
+    player.z
+  );
 
+  const dir = getLookRay();
   const step = 0.1;
   let dist = 0;
+
   let lastAirPos = null;
 
   while (dist < maxDist) {
@@ -268,8 +240,15 @@ function raycastBlock(maxDist = 6) {
     const bz = Math.floor(pz);
 
     const id = getBlock(bx, by, bz);
+
     if (id !== BLOCK.AIR) {
-      return { hit: true, x: bx, y: by, z: bz, placePos: lastAirPos };
+      return {
+        hit: true,
+        x: bx,
+        y: by,
+        z: bz,
+        placePos: lastAirPos
+      };
     }
 
     lastAirPos = { x: bx, y: by, z: bz };
@@ -279,6 +258,9 @@ function raycastBlock(maxDist = 6) {
   return { hit: false };
 }
 
+/* -----------------------------------------------------------
+   MINAGE
+----------------------------------------------------------- */
 function mineBlock() {
   const hit = raycastBlock();
   if (!hit.hit) return;
@@ -287,6 +269,9 @@ function mineBlock() {
   rebuildChunkAt(hit.x, hit.z);
 }
 
+/* -----------------------------------------------------------
+   PLACEMENT
+----------------------------------------------------------- */
 function placeBlock() {
   const hit = raycastBlock();
   if (!hit.hit || !hit.placePos) return;
@@ -294,14 +279,11 @@ function placeBlock() {
   const blockId = HOTBAR_BLOCKS[selectedHotbarIndex] || BLOCK.STONE;
   const { x, y, z } = hit.placePos;
 
-  const px = player.x;
-  const py = player.y;
-  const pz = player.z;
-
+  // Empêche de se placer un bloc dans la tête
   if (
-    Math.abs(x + 0.5 - px) < PLAYER.radius &&
-    Math.abs(y + 0.5 - py) < PLAYER.height &&
-    Math.abs(z + 0.5 - pz) < PLAYER.radius
+    Math.abs(x + 0.5 - player.x) < PLAYER.radius &&
+    Math.abs(y + 0.5 - player.y) < PLAYER.height &&
+    Math.abs(z + 0.5 - player.z) < PLAYER.radius
   ) {
     return;
   }
@@ -310,40 +292,157 @@ function placeBlock() {
   rebuildChunkAt(x, z);
 }
 
+/* -----------------------------------------------------------
+   REBUILD CHUNK
+----------------------------------------------------------- */
 function rebuildChunkAt(x, z) {
   const cx = Math.floor(x / CHUNK.SIZE);
   const cz = Math.floor(z / CHUNK.SIZE);
+
   const key = chunkKey(cx, cz);
   const old = chunkMeshes.get(key);
+
   if (old) {
     scene.remove(old);
     chunkMeshes.delete(key);
   }
+
   ensureChunk(cx, cz);
 }
 
+/* -----------------------------------------------------------
+   HOTBAR UI
+----------------------------------------------------------- */
 function updateHotbarUI() {
   hotbarEl.innerHTML = "";
+
   HOTBAR_BLOCKS.forEach((id, i) => {
     const def = BLOCK_DEFS[id];
+
     const slot = document.createElement("div");
     slot.className = "hotbar-slot";
+
     if (i === selectedHotbarIndex) slot.classList.add("selected");
+
     slot.textContent = def ? def.name[0] : "?";
+
     hotbarEl.appendChild(slot);
   });
 }
 
+/* -----------------------------------------------------------
+   INFO UI (biome + position)
+----------------------------------------------------------- */
 function updateInfoUI() {
   biomeLabelEl.textContent = "Biome: " + currentBiomeLabel;
+
   posLabelEl.textContent =
     "X: " + player.x.toFixed(1) +
     " Y: " + player.y.toFixed(1) +
     " Z: " + player.z.toFixed(1);
 }
 
+/* -----------------------------------------------------------
+   BIOME LABEL
+----------------------------------------------------------- */
+function updateBiomeLabel() {
+  const nx = player.x / 256;
+  const nz = player.z / 256;
+
+  const hBase = heightNoise.noise(nx * 1.5, nz * 1.5);
+  const hDetail = heightNoise.noise(nx * 4.0, nz * 4.0) * 0.25;
+
+  const heightNorm = Math.min(1, Math.max(0, hBase * 0.7 + hDetail * 0.3));
+
+  const temp = tempNoise.noise(nx * 0.8, nz * 0.8);
+  const humid = humidNoise.noise(nx * 0.8, nz * 0.8);
+
+  currentBiomeLabel = getBiomeAt(temp, humid, heightNorm);
+}
+
+/* -----------------------------------------------------------
+   UI INIT
+----------------------------------------------------------- */
+function initUI() {
+  hotbarEl = document.getElementById("hotbar");
+  biomeLabelEl = document.getElementById("biome-label");
+  posLabelEl = document.getElementById("pos-label");
+  hintEl = document.getElementById("hint");
+
+  updateHotbarUI();
+}
+
+/* -----------------------------------------------------------
+   CONTRÔLES (optimisés + sprint + accroupi)
+----------------------------------------------------------- */
+let keys = {};
+let pointerLocked = false;
+
+function initControls() {
+  document.addEventListener("keydown", (e) => {
+    keys[e.code] = true;
+
+    // Hotbar
+    if (e.code >= "Digit1" && e.code <= "Digit4") {
+      selectedHotbarIndex = Number(e.code.slice(-1)) - 1;
+      updateHotbarUI();
+    }
+
+    // Sprint
+    if (e.code === "ControlLeft" || e.code === "ControlRight") {
+      isSprinting = true;
+    }
+
+    // Accroupi
+    if (e.code === "ShiftLeft" || e.code === "ShiftRight") {
+      isCrouching = true;
+    }
+  });
+
+  document.addEventListener("keyup", (e) => {
+    keys[e.code] = false;
+
+    if (e.code === "ControlLeft" || e.code === "ControlRight") {
+      isSprinting = false;
+    }
+
+    if (e.code === "ShiftLeft" || e.code === "ShiftRight") {
+      isCrouching = false;
+    }
+  });
+
+  // Pointer lock
+  document.body.addEventListener("click", () => {
+    if (!pointerLocked) controls.lock();
+  });
+
+  controls.addEventListener("lock", () => {
+    pointerLocked = true;
+    hintEl.style.display = "none";
+  });
+
+  controls.addEventListener("unlock", () => {
+    pointerLocked = false;
+    hintEl.style.display = "block";
+  });
+
+  // Minage / placement
+  document.addEventListener("mousedown", (e) => {
+    if (!pointerLocked) return;
+
+    if (e.button === 0) mineBlock();
+    else if (e.button === 2) placeBlock();
+  });
+
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+}
+
+/* -----------------------------------------------------------
+   SCÈNE + LUMIÈRES
+----------------------------------------------------------- */
 function initScene() {
   canvas = document.getElementById("game-canvas");
+
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -352,11 +451,17 @@ function initScene() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x87ceeb);
 
-  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 500);
+  camera = new THREE.PerspectiveCamera(
+    75,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    500
+  );
   camera.position.set(player.x, player.y + PLAYER.eyeHeight, player.z);
 
   controls = new THREE.PointerLockControls(camera, document.body);
 
+  // Lumières
   const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.7);
   hemi.position.set(0, 100, 0);
   scene.add(hemi);
@@ -375,23 +480,16 @@ function initScene() {
   });
 }
 
-function updateBiomeLabel() {
-  const nx = player.x / 256;
-  const nz = player.z / 256;
-  const hBase = heightNoise.noise(nx * 1.5, nz * 1.5);
-  const hDetail = heightNoise.noise(nx * 4.0, nz * 4.0) * 0.25;
-  const heightNorm = Math.min(1, Math.max(0, hBase * 0.7 + hDetail * 0.3));
-  const temp = tempNoise.noise(nx * 0.8, nz * 0.8);
-  const humid = humidNoise.noise(nx * 0.8, nz * 0.8);
-  currentBiomeLabel = getBiomeAt(temp, humid, heightNorm);
-}
-
+/* -----------------------------------------------------------
+   GAME LOOP (optimisée + sprint + accroupi)
+----------------------------------------------------------- */
 function gameLoop() {
   requestAnimationFrame(gameLoop);
 
   const delta = clock.getDelta();
 
   if (pointerLocked) {
+    // Direction caméra
     const forward = new THREE.Vector3();
     camera.getWorldDirection(forward);
     forward.y = 0;
@@ -400,8 +498,7 @@ function gameLoop() {
     const right = new THREE.Vector3();
     right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
 
-    let dirVec = { forward: new THREE.Vector3(0, 0, 0), right: new THREE.Vector3(0, 0, 0), move: 0, jump: false };
-
+    // Mouvement
     let moveX = 0;
     let moveZ = 0;
 
@@ -411,18 +508,38 @@ function gameLoop() {
     if (keys["KeyD"]) moveX += 1;
 
     const len = Math.hypot(moveX, moveZ);
+
+    let dirVec = {
+      forward: new THREE.Vector3(),
+      right: new THREE.Vector3(),
+      move: 0,
+      jump: keys["Space"] || false,
+      speedMultiplier: 1
+    };
+
     if (len > 0) {
       moveX /= len;
       moveZ /= len;
+
       dirVec.forward.copy(forward).multiplyScalar(moveZ);
       dirVec.right.copy(right).multiplyScalar(moveX);
       dirVec.move = 1;
     }
 
-    dirVec.jump = !!keys["Space"];
+    // Sprint
+    if (isSprinting) dirVec.speedMultiplier = 1.8;
 
+    // Accroupi
+    if (isCrouching) dirVec.speedMultiplier = 0.45;
+
+    // Déplacement joueur
     movePlayer(delta, dirVec);
-    camera.position.set(player.x, player.y + PLAYER.eyeHeight, player.z);
+
+    // Caméra (accroupi)
+    let eye = PLAYER.eyeHeight;
+    if (isCrouching) eye *= 0.55;
+
+    camera.position.set(player.x, player.y + eye, player.z);
   }
 
   updateVisibleChunks();
@@ -432,14 +549,9 @@ function gameLoop() {
   renderer.render(scene, camera);
 }
 
-function initUI() {
-  hotbarEl = document.getElementById("hotbar");
-  biomeLabelEl = document.getElementById("biome-label");
-  posLabelEl = document.getElementById("pos-label");
-  hintEl = document.getElementById("hint");
-  updateHotbarUI();
-}
-
+/* -----------------------------------------------------------
+   MAIN
+----------------------------------------------------------- */
 function main() {
   initWorld();
   spawnPlayer();
