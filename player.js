@@ -26,24 +26,33 @@ function spawnPlayer() {
 
   player.x = sx + 0.5;
   player.z = sz + 0.5;
-  player.y = sy + PLAYER.height + 0.2; // bien au-dessus du sol
+  player.y = sy + PLAYER.height + 0.2;
   player.vx = player.vy = player.vz = 0;
   player.onGround = false;
 }
 
+/* -----------------------------------------------------------
+   MOUVEMENT DU JOUEUR (avec sprint + accroupi)
+----------------------------------------------------------- */
 function movePlayer(delta, controlsDir) {
-  const accel = PLAYER.speed;
+  const baseSpeed = PLAYER.speed;
+
+  // On applique le multiplicateur (sprint / accroupi)
+  const speed = baseSpeed * controlsDir.speedMultiplier;
 
   const forward = controlsDir.forward;
   const right = controlsDir.right;
 
-  player.vx = (forward.x * accel + right.x * accel) * controlsDir.move;
-  player.vz = (forward.z * accel + right.z * accel) * controlsDir.move;
+  // Vitesse horizontale
+  player.vx = (forward.x * speed + right.x * speed) * controlsDir.move;
+  player.vz = (forward.z * speed + right.z * speed) * controlsDir.move;
 
+  // Gravité
   if (!player.onGround) {
     player.vy -= PLAYER.gravity * delta;
   }
 
+  // Saut
   if (controlsDir.jump && player.onGround) {
     player.vy = PLAYER.jumpSpeed;
     player.onGround = false;
@@ -52,6 +61,9 @@ function movePlayer(delta, controlsDir) {
   integratePlayer(delta);
 }
 
+/* -----------------------------------------------------------
+   PHYSIQUE + COLLISIONS
+----------------------------------------------------------- */
 function integratePlayer(delta) {
   let nx = player.x + player.vx * delta;
   let ny = player.y + player.vy * delta;
@@ -108,9 +120,7 @@ function integratePlayer(delta) {
     }
   } else {
     // sol
-    if (
-      isSolidAt(nx, ny - 0.1, nz)
-    ) {
+    if (isSolidAt(nx, ny - 0.1, nz)) {
       player.vy = 0;
       player.onGround = true;
       ny = Math.floor(ny) + 0.001;
@@ -125,4 +135,3 @@ function integratePlayer(delta) {
     spawnPlayer();
   }
 }
-
