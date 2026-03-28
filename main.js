@@ -143,6 +143,18 @@ function buildChunkMesh(cx, cz) {
   mesh.castShadow = false;
   mesh.receiveShadow = true;
 
+  // ----------------------------------------------------
+  //  AJOUT : CONTOURS NOIRS AUTOUR DES BLOCS DU CHUNK
+  // ----------------------------------------------------
+  const wireGeom = new THREE.WireframeGeometry(geom);
+  const wireMat = new THREE.LineBasicMaterial({
+    color: 0x000000,
+    linewidth: 1
+  });
+  const wireframe = new THREE.LineSegments(wireGeom, wireMat);
+  mesh.add(wireframe);
+  // ----------------------------------------------------
+
   mesh.position.set(0, 0, 0);
   return mesh;
 }
@@ -386,7 +398,6 @@ function gameLoop() {
     forward.normalize();
 
     const right = new THREE.Vector3();
-    // ✔️ CORRECTION DÉFINITIVE : forward × up
     right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
 
     let dirVec = { forward: new THREE.Vector3(0, 0, 0), right: new THREE.Vector3(0, 0, 0), move: 0, jump: false };
