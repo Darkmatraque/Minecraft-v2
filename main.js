@@ -373,7 +373,7 @@ function initUI() {
 }
 
 /* -----------------------------------------------------------
-   CONTRÔLES (optimisés + sprint + accroupi)
+   CONTRÔLES (optimisés + sprint toggle + accroupi)
 ----------------------------------------------------------- */
 let keys = {};
 let pointerLocked = false;
@@ -388,12 +388,12 @@ function initControls() {
       updateHotbarUI();
     }
 
-    // Sprint
+    // Sprint TOGGLE (une pression = ON / OFF)
     if (e.code === "ControlLeft" || e.code === "ControlRight") {
-      isSprinting = true;
+      isSprinting = !isSprinting;   // inverse l'état
     }
 
-    // Accroupi
+    // Accroupi (maintenu)
     if (e.code === "ShiftLeft" || e.code === "ShiftRight") {
       isCrouching = true;
     }
@@ -402,13 +402,13 @@ function initControls() {
   document.addEventListener("keyup", (e) => {
     keys[e.code] = false;
 
-    if (e.code === "ControlLeft" || e.code === "ControlRight") {
-      isSprinting = false;
-    }
-
+    // Accroupi (maintenu)
     if (e.code === "ShiftLeft" || e.code === "ShiftRight") {
       isCrouching = false;
     }
+
+    // IMPORTANT : ne rien mettre ici pour CTRL
+    // (sinon ça annule le toggle)
   });
 
   // Pointer lock
@@ -436,6 +436,7 @@ function initControls() {
 
   document.addEventListener("contextmenu", (e) => e.preventDefault());
 }
+
 
 /* -----------------------------------------------------------
    SCÈNE + LUMIÈRES
